@@ -5,7 +5,7 @@ using System.Text;
 namespace PxUi
 {
     /// <summary>配置文件读写，键值格式与引擎侧解析器一致</summary>
-    internal static class AppConfig
+    internal class AppConfig
     {
         public string UpstreamType = "socks5";
         public string UpstreamHost = "127.0.0.1";
