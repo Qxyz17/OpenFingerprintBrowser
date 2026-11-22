@@ -1,8 +1,8 @@
-#include <windows.h>
-
 #include <csignal>
 #include <cstdio>
 #include <string>
+
+#include <windows.h>
 
 #include "api.h"
 
@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
   int rc = px_start(config_path.c_str());
   if (rc != 0) {
     char err[512] = {};
-    px_last_error(err, sizeof(err));
+    px_last_error(err, static_cast<int>(sizeof(err)));
     std::fprintf(stderr, "%s\n", err);
     return 1;
   }
