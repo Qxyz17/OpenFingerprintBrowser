@@ -306,6 +306,29 @@ namespace PxUi.Browser
                     new JObject { ["url"] = profile.StartUrl }, token).ConfigureAwait(false);
             }
 
+            // 导航后回读实际值，注入没生效时日志里一眼能看出来
+            await Task.Delay(1200, token).ConfigureAwait(false);
+            try
+            {
+                var verify = await SendToSession(sessionId, "Runtime.evaluate", new JObject
+                {
+                    ["expression"] =
+                        "JSON.stringify({t:Intl.DateTimeFormat().resolvedOptions().timeZone," +
+                        "l:Intl.DateTimeFormat().resolvedOptions().locale," +
+                        "n:navigator.language," +
+                        "o:new Date().getTimezoneOffset()," +
+                        "s:screen.width+'x'+screen.height})",
+                    ["returnByValue"] = true
+                }, token).ConfigureAwait(false);
+
+                string raw = verify["result"]?["value"]?.ToString();
+                log("回读 " + (string.IsNullOrEmpty(raw) ? "无结果" : raw));
+            }
+            catch (Exception ex)
+            {
+                log("回读失败 " + ex.Message);
+            }
+
             _sessionId = sessionId;
         }
 

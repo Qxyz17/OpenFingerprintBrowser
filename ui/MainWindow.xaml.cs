@@ -163,9 +163,19 @@ namespace PxUi
         private void AppendLog(string line)
         {
             App.Log(line);
+            string stamp = DateTime.Now.ToString("HH:mm:ss");
+
+            if (LogBox != null)
+            {
+                LogBox.AppendText(stamp + " " + line + Environment.NewLine);
+                LogBox.ScrollToEnd();
+            }
         }
 
-        private void ClearLog_Click(object sender, RoutedEventArgs e) { }
+        private void ClearLog_Click(object sender, RoutedEventArgs e)
+        {
+            if (LogBox != null) LogBox.Clear();
+        }
 
         private void Min_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
