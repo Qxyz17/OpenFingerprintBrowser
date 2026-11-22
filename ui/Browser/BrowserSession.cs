@@ -290,7 +290,7 @@ namespace PxUi.Browser
                 {
                     try
                     {
-                        await SendToSession("Fetch.continueRequest",
+                        await SendToSession(sessionId, "Fetch.continueRequest",
                             new JObject { ["requestId"] = requestId }, CancellationToken.None)
                             .ConfigureAwait(false);
                     }
