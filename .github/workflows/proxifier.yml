@@ -19,12 +19,15 @@ jobs:
       - name: Fetch WinDivert SDK
         shell: pwsh
         run: |
-          $ver = "2.2.2"
-          $url = "https://reqrypt.org/download/WinDivert-$ver.zip"
+          $url = "https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip"
           $dst = "${{ github.workspace }}\proxifier\third_party\windivert"
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\wd.zip"
-          Expand-Archive -Path "$env:TEMP\wd.zip" -DestinationPath $dst -Force
+          Expand-Archive -Path "$env:TEMP\wd.zip" -DestinationPath "$env:TEMP\wd" -Force
+          # 压缩包内多一层版本目录，摊平到 WINDIVERT_DIR
+          Get-ChildItem "$env:TEMP\wd" -Directory | ForEach-Object {
+            Copy-Item "$($_.FullName)\*" $dst -Recurse -Force
+          }
           Get-ChildItem $dst -Recurse -Filter WinDivert.lib | Select-Object FullName
 
       - name: Configure
