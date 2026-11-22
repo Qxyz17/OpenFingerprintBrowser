@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 namespace PxUi.Browser
 {
     /// <summary>单个 profile 的全部指纹参数</summary>
-    internal sealed class Profile
+    public sealed class Profile
     {
         public string Id = Guid.NewGuid().ToString("N");
         public string Name = "新配置";
