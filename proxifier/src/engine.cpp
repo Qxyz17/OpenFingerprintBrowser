@@ -1,9 +1,12 @@
 #include "engine.h"
 
 #include <iphlpapi.h>
+#include <tlhelp32.h>
 #include <ws2tcpip.h>
 #include <windivert.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -13,27 +16,29 @@
 
 namespace {
 
-uint64_t NowSeconds() {
+constexpr uint64_t kProcRefreshMs = 1500;
+constexpr uint64_t kSweepMs = 30000;
+
+uint64_t NowMilli() {
   return static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::now().time_since_epoch())
           .count());
 }
 
-uint64_t PackKey(uint32_t src_addr, uint16_t src_port, uint32_t dst_addr,
-                 uint16_t dst_port) {
-  uint64_t h = src_addr;
-  h = h * 16777619u ^ src_port;
-  h = h * 16777619u ^ dst_addr;
-  h = h * 16777619u ^ dst_port;
-  return h;
+uint64_t NowSeconds() { return NowMilli() / 1000; }
+
+std::string LowerAscii(std::string s) {
+  for (char& c : s) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return s;
 }
 
-// 环回地址不能作为重定向目标，WinDivert 的报文看不到本机环回，
-// 必须挑一张真实网卡的 IPv4
+// 环回地址在 WinDivert 的包路径上看不到，重定向只能落到真实网卡的 IPv4
 uint32_t PickLocalIpv4() {
-  ULONG size = 0;
   const ULONG flags = GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+  ULONG size = 0;
   GetAdaptersAddresses(AF_INET, flags, nullptr, nullptr, &size);
   if (size == 0) {
     return htonl(INADDR_LOOPBACK);
@@ -80,17 +85,15 @@ uint32_t LookupOwnerPid(uint32_t local_addr, uint16_t local_port,
 
   for (DWORD i = 0; i < table->dwNumEntries; ++i) {
     const auto& row = table->table[i];
-    uint16_t row_local_port =
-        static_cast<uint16_t>(ntohs(static_cast<unsigned short>(row.dwLocalPort)));
-    if (row_local_port != local_port) {
+    if (static_cast<uint16_t>(ntohs(static_cast<unsigned short>(row.dwLocalPort))) !=
+        local_port) {
       continue;
     }
     if (row.dwLocalAddr != local_addr || row.dwRemoteAddr != remote_addr) {
       continue;
     }
-    uint16_t row_remote_port =
-        static_cast<uint16_t>(ntohs(static_cast<unsigned short>(row.dwRemotePort)));
-    if (row_remote_port != remote_port) {
+    if (static_cast<uint16_t>(
+            ntohs(static_cast<unsigned short>(row.dwRemotePort))) != remote_port) {
       continue;
     }
     return row.dwOwningPid;
@@ -128,17 +131,64 @@ void RelayBoth(SOCKET client, SOCKET upstream) {
 
 }  // namespace
 
-Engine::Engine(const Config& config, std::vector<uint32_t> pids)
-    : config_(config),
-      pids_(std::move(pids)),
-      targets_(config.base_port, config.port_count) {}
+Engine::Engine(const Config& config)
+    : config_(config), targets_(config.base_port, config.port_count) {}
 
 Engine::~Engine() { Stop(); }
 
-bool Engine::IsTargetPid(uint32_t pid) const {
-  for (uint32_t p : pids_) {
-    if (p == pid) {
+void Engine::Log(const std::string& text) {
+  if (log_) {
+    log_(text.c_str());
+  }
+}
+
+void Engine::RefreshProcTable() {
+  uint64_t now = NowMilli();
+  if (now - proc_stamp_ < kProcRefreshMs) {
+    return;
+  }
+  proc_stamp_ = now;
+
+  std::unordered_map<uint32_t, ProcEntry> table;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) {
+    return;
+  }
+
+  PROCESSENTRY32 entry{};
+  entry.dwSize = sizeof(entry);
+  if (Process32First(snap, &entry)) {
+    do {
+      table[entry.th32ProcessID] = ProcEntry{LowerAscii(entry.szExeFile)};
+    } while (Process32Next(snap, &entry));
+  }
+  CloseHandle(snap);
+
+  std::lock_guard<std::mutex> lock(proc_mu_);
+  proc_table_.swap(table);
+}
+
+bool Engine::IsTargetPid(uint32_t pid) {
+  RefreshProcTable();
+
+  std::string name;
+  {
+    std::lock_guard<std::mutex> lock(proc_mu_);
+    auto it = proc_table_.find(pid);
+    if (it == proc_table_.end()) {
+      return false;
+    }
+    name = it->second.name;
+  }
+
+  for (const std::string& p : config_.processes) {
+    if (p == name) {
       return true;
+    }
+  }
+  for (const std::string& p : config_.exclude_processes) {
+    if (p == name) {
+      return false;
     }
   }
   return false;
@@ -148,7 +198,7 @@ bool Engine::OpenDivert(std::string* error) {
   divert_ = WinDivertOpen("outbound and tcp", WINDIVERT_LAYER_NETWORK, 0, 0);
   if (divert_ == INVALID_HANDLE_VALUE) {
     divert_ = nullptr;
-    *error = "WinDivertOpen 打开失败，需要管理员权限并允许加载驱动";
+    *error = "WinDivert 打开失败，需要管理员权限";
     return false;
   }
   WinDivertSetParam(divert_, WINDIVERT_PARAM_QUEUE_LENGTH, 8192);
@@ -156,17 +206,69 @@ bool Engine::OpenDivert(std::string* error) {
 }
 
 bool Engine::Start(std::string* error) {
+  if (running_.load()) {
+    return true;
+  }
+
   WSADATA wsa{};
   if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
     *error = "WSAStartup 失败";
     return false;
   }
-  return OpenDivert(error);
+
+  if (!OpenDivert(error)) {
+    WSACleanup();
+    return false;
+  }
+
+  local_ip_ = PickLocalIpv4();
+  if (local_ip_ == htonl(INADDR_LOOPBACK)) {
+    *error = "找不到可用网卡的 IPv4";
+    Stop();
+    return false;
+  }
+
+  running_.store(true);
+  worker_ = std::thread([this] { Run(); });
+  return true;
+}
+
+void Engine::Stop() {
+  if (!running_.exchange(false)) {
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+    return;
+  }
+
+  if (divert_) {
+    WinDivertClose(divert_);
+    divert_ = nullptr;
+  }
+
+  if (worker_.joinable()) {
+    worker_.join();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(listener_mu_);
+    for (auto& entry : listeners_) {
+      closesocket(entry.second);
+    }
+    listeners_.clear();
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(flow_mu_);
+    flows_.clear();
+  }
+
+  WSACleanup();
 }
 
 void Engine::OnPacket(unsigned char* packet, UINT* packet_len) {
-  auto* addr =
-      reinterpret_cast<WINDIVERT_ADDRESS*>(packet + *packet_len - sizeof(WINDIVERT_ADDRESS));
+  auto* addr = reinterpret_cast<WINDIVERT_ADDRESS*>(
+      packet + *packet_len - sizeof(WINDIVERT_ADDRESS));
   UINT raw_len = *packet_len - static_cast<UINT>(sizeof(WINDIVERT_ADDRESS));
 
   PWINDIVERT_IPHDR iphdr = nullptr;
@@ -187,14 +289,15 @@ void Engine::OnPacket(unsigned char* packet, UINT* packet_len) {
   const uint16_t end = static_cast<uint16_t>(config_.base_port + config_.port_count);
 
   if (addr->Outbound) {
-    uint64_t key = PackKey(src_addr, src_port, dst_addr, dst_port);
+    FlowKey key{src_addr, src_port, dst_addr, dst_port};
 
     {
       std::lock_guard<std::mutex> lock(flow_mu_);
       auto it = flows_.find(key);
       if (it != flows_.end()) {
+        it->second.last_active = NowSeconds();
         iphdr->DstAddr = local_ip_;
-        tcphdr->DstPort = htons(it->second);
+        tcphdr->DstPort = htons(it->second.proxy_port);
         WinDivertHelperCalcChecksums(packet, raw_len, addr, 0);
         WinDivertSend(divert_, packet, raw_len, nullptr, addr);
         return;
@@ -208,8 +311,10 @@ void Engine::OnPacket(unsigned char* packet, UINT* packet_len) {
         TargetKey target{dst_addr, dst_port};
         uint16_t proxy_port = 0;
         if (targets_.Acquire(target, &proxy_port)) {
-          std::lock_guard<std::mutex> lock(flow_mu_);
-          flows_[key] = proxy_port;
+          {
+            std::lock_guard<std::mutex> lock(flow_mu_);
+            flows_[key] = FlowEntry{proxy_port, NowSeconds()};
+          }
           EnsureListener(proxy_port);
           iphdr->DstAddr = local_ip_;
           tcphdr->DstPort = htons(proxy_port);
@@ -222,7 +327,7 @@ void Engine::OnPacket(unsigned char* packet, UINT* packet_len) {
     return;
   }
 
-  // 代端口方向的报文改回原始四元组，客户端状态机才不会错乱
+  // 代端口方向的报文还原成原始四元组，客户端状态机才不错乱
   if (src_addr == local_ip_ && src_port >= start && src_port < end) {
     Target target;
     if (targets_.LookupByProxyPort(src_port, &target)) {
@@ -233,26 +338,48 @@ void Engine::OnPacket(unsigned char* packet, UINT* packet_len) {
     }
     if (tcphdr->Fin || tcphdr->Rst) {
       std::lock_guard<std::mutex> lock(flow_mu_);
-      flows_.erase(PackKey(dst_addr, dst_port, local_ip_, src_port));
+      flows_.erase(FlowKey{dst_addr, dst_port, local_ip_, src_port});
     }
   }
 
   WinDivertSend(divert_, packet, raw_len, nullptr, addr);
 }
 
+void Engine::Sweep(uint64_t now) {
+  auto idle = targets_.CollectIdle(now, config_.flow_idle_seconds);
+  for (uint16_t port : idle) {
+    CloseListener(port);
+  }
+
+  std::lock_guard<std::mutex> lock(flow_mu_);
+  for (auto it = flows_.begin(); it != flows_.end();) {
+    if (now - it->second.last_active >=
+        static_cast<uint64_t>(config_.flow_idle_seconds)) {
+      it = flows_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 void Engine::Run() {
-  local_ip_ = PickLocalIpv4();
-  running_ = true;
-
   std::vector<unsigned char> buffer(WINDIVERT_MTU_MAX + sizeof(WINDIVERT_ADDRESS));
-  uint64_t last_sweep = NowSeconds();
+  uint64_t last_sweep = NowMilli();
 
-  while (running_) {
+  while (running_.load()) {
     UINT len = 0;
     WINDIVERT_ADDRESS addr{};
     if (!WinDivertRecv(divert_, buffer.data(),
                        static_cast<UINT>(buffer.size()) - sizeof(addr), &len,
                        &addr)) {
+      if (!running_.load()) {
+        break;
+      }
+      if (GetLastError() == ERROR_NO_DATA) {
+        continue;
+      }
+      // 驱动被卸载或句柄失效，退出循环让上层看到非运行态
+      running_.store(false);
       break;
     }
 
@@ -260,31 +387,12 @@ void Engine::Run() {
     UINT total = len + static_cast<UINT>(sizeof(addr));
     OnPacket(buffer.data(), &total);
 
-    uint64_t now = NowSeconds();
-    if (now - last_sweep >= 30) {
+    uint64_t now = NowMilli();
+    if (now - last_sweep >= kSweepMs) {
       last_sweep = now;
-      auto idle = targets_.CollectIdle(now, config_.flow_idle_seconds);
-      for (uint16_t port : idle) {
-        CloseListener(port);
-      }
+      Sweep(now / 1000);
     }
   }
-}
-
-void Engine::Stop() {
-  running_ = false;
-  if (divert_) {
-    WinDivertClose(divert_);
-    divert_ = nullptr;
-  }
-  {
-    std::lock_guard<std::mutex> lock(listener_mu_);
-    for (auto& entry : listeners_) {
-      closesocket(entry.second);
-    }
-    listeners_.clear();
-  }
-  WSACleanup();
 }
 
 void Engine::EnsureListener(uint16_t proxy_port) {
@@ -305,6 +413,7 @@ void Engine::EnsureListener(uint16_t proxy_port) {
   if (bind(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0 ||
       listen(s, SOMAXCONN) != 0) {
     closesocket(s);
+    Log("代端口监听失败: " + std::to_string(proxy_port));
     return;
   }
 
@@ -323,7 +432,7 @@ void Engine::CloseListener(uint16_t proxy_port) {
 }
 
 void Engine::AcceptLoop(SOCKET listen_socket, uint16_t proxy_port) {
-  while (running_) {
+  while (running_.load()) {
     SOCKET client = accept(listen_socket, nullptr, nullptr);
     if (client == INVALID_SOCKET) {
       return;
@@ -340,8 +449,7 @@ void Engine::AcceptLoop(SOCKET listen_socket, uint16_t proxy_port) {
     char ip_buf[INET_ADDRSTRLEN] = {};
     inet_ntop(AF_INET, &ia, ip_buf, sizeof(ip_buf));
 
-    // TLS 首包里有 SNI 就按域名走，交给代理解析，
-    // 本机不做域名解析，避免 DNS 泄漏
+    // 首包能取到 SNI 就按域名走，主机名交给代理解析，本机不做 DNS
     std::string host = ip_buf;
     char peek_buf[8192];
     int n = recv(client, peek_buf, sizeof(peek_buf), MSG_PEEK);

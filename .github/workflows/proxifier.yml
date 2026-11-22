@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "proxifier/**"
+      - "ui/**"
       - ".github/workflows/proxifier.yml"
   pull_request:
     paths:
       - "proxifier/**"
+      - "ui/**"
   workflow_dispatch:
 
 jobs:
@@ -24,36 +26,41 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dst | Out-Null
           Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\wd.zip"
           Expand-Archive -Path "$env:TEMP\wd.zip" -DestinationPath "$env:TEMP\wd" -Force
-          # 压缩包内多一层版本目录，摊平到 WINDIVERT_DIR
           Get-ChildItem "$env:TEMP\wd" -Directory | ForEach-Object {
             Copy-Item "$($_.FullName)\*" $dst -Recurse -Force
           }
           Get-ChildItem $dst -Recurse -Filter WinDivert.lib | Select-Object FullName
 
-      - name: Configure
+      - name: Configure engine
         shell: pwsh
         run: |
           cmake -S proxifier -B proxifier/build `
             -G "Visual Studio 17 2022" -A x64 `
             -DWINDIVERT_DIR="${{ github.workspace }}\proxifier\third_party\windivert"
 
-      - name: Build
+      - name: Build engine
         shell: pwsh
         run: cmake --build proxifier/build --config Release
+
+      - name: Build UI
+        shell: pwsh
+        run: |
+          dotnet build ui/PxUi.csproj -c Release -nologo
+          if ($LASTEXITCODE -ne 0) { throw "UI 编译失败" }
 
       - name: Package
         shell: pwsh
         run: |
-          $out = "proxifier/out"
+          $out = "dist"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item "proxifier/build/Release/proxifier.exe" $out -Force
-          # 运行时必须与 WinDivert.dll 和同目录的驱动同放，缺一个启动即 0xC0000135
+          Copy-Item "ui/bin/Release/PxUi.exe" $out -Force
+          Copy-Item "ui/bin/Release/PxUi.exe.config" $out -Force -ErrorAction SilentlyContinue
+          Copy-Item "proxifier/build/Release/proxifier.dll" $out -Force
           Copy-Item "proxifier/third_party/windivert/x64/WinDivert.dll" $out -Force
           Copy-Item "proxifier/third_party/windivert/x64/WinDivert64.sys" $out -Force
-          Copy-Item "proxifier/config.example.ini" "$out/config.ini" -Force
           Get-ChildItem $out | Select-Object Name,Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: proxifier-x64
-          path: proxifier/out/*
+          name: pxui-x64
+          path: dist/*

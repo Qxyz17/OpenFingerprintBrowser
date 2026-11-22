@@ -1,12 +1,10 @@
 #include <windows.h>
 
 #include <csignal>
-#include <iostream>
+#include <cstdio>
 #include <string>
-#include <thread>
 
-#include "config.h"
-#include "engine.h"
+#include "api.h"
 
 namespace {
 
@@ -14,9 +12,7 @@ volatile bool g_stop = false;
 
 void OnSignal(int) { g_stop = true; }
 
-void PrintUsage() {
-  std::cerr << "proxifier --config <path>\n";
-}
+void OnLog(const char* text) { std::printf("%s\n", text); }
 
 }  // namespace
 
@@ -27,47 +23,34 @@ int main(int argc, char** argv) {
     if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
       config_path = argv[++i];
     } else if (arg == "--help" || arg == "-h") {
-      PrintUsage();
+      std::printf("pxcli --config <path>\n");
       return 0;
     }
   }
 
   if (config_path.empty()) {
-    PrintUsage();
+    std::printf("pxcli --config <path>\n");
     return 1;
   }
 
-  Config config;
-  std::string error;
-  if (!Config::Load(config_path, &config, &error)) {
-    std::cerr << error << "\n";
+  px_set_log(&OnLog);
+
+  int rc = px_start(config_path.c_str());
+  if (rc != 0) {
+    char err[512] = {};
+    px_last_error(err, sizeof(err));
+    std::fprintf(stderr, "%s\n", err);
     return 1;
   }
 
-  std::vector<uint32_t> pids = CollectTargetPids(config);
-  if (pids.empty()) {
-    std::cerr << "未匹配到目标进程\n";
-    return 1;
-  }
-
-  Engine engine(config, pids);
-  if (!engine.Start(&error)) {
-    std::cerr << error << "\n";
-    return 1;
-  }
+  std::printf("running\n");
 
   std::signal(SIGINT, OnSignal);
   std::signal(SIGTERM, OnSignal);
+  while (!g_stop) {
+    Sleep(200);
+  }
 
-  std::thread stopper([] {
-    while (!g_stop) {
-      Sleep(200);
-    }
-  });
-
-  engine.Run();
-  g_stop = true;
-  stopper.join();
-  engine.Stop();
+  px_stop();
   return 0;
 }

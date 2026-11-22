@@ -8,20 +8,21 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# WinDivert SDK 解压后的目录，CI 里由 workflow 填充
 if(NOT DEFINED WINDIVERT_DIR)
   set(WINDIVERT_DIR "${CMAKE_SOURCE_DIR}/third_party/windivert")
 endif()
 
-add_executable(proxifier
-  src/main.cpp
+set(PX_SOURCES
+  src/api.cpp
   src/config.cpp
-  src/targets.cpp
-  src/sni.cpp
-  src/relay.cpp
   src/engine.cpp
   src/processes.cpp
+  src/relay.cpp
+  src/sni.cpp
+  src/targets.cpp
 )
+
+add_library(proxifier SHARED ${PX_SOURCES})
 
 target_include_directories(proxifier PRIVATE
   src
@@ -38,8 +39,13 @@ target_compile_definitions(proxifier PRIVATE
   _WINSOCK_DEPRECATED_NO_WARNINGS
   WIN32_LEAN_AND_MEAN
   NOMINMAX
+  PX_BUILD_DLL
 )
+
+add_executable(pxcli src/main.cpp)
+target_link_libraries(pxcli PRIVATE proxifier)
 
 if(MSVC)
   target_compile_options(proxifier PRIVATE /W4 /permissive- /utf-8)
+  target_compile_options(pxcli PRIVATE /W4 /permissive- /utf-8)
 endif()

@@ -1,4 +1,9 @@
-﻿build/
+﻿bin/
+obj/
+dist/
+_artifacts/
+_artifacts2/
 _srcprobe/
+proxifier/build/
 proxifier/third_party/
-*.user
+proxifier/out/
