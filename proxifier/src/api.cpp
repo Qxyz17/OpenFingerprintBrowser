@@ -5,6 +5,7 @@
 #include <string>
 
 #include "config.h"
+#include "engine.h"
 
 namespace {
 
