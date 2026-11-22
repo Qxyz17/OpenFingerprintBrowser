@@ -376,6 +376,8 @@ namespace PxUi.Browser
         private string _fallbackSession = "";
         private readonly object _tabLock = new object();
         private readonly HashSet<string> _tabs = new HashSet<string>();
+
+        private async Task<JObject> SendToSession(string sessionId, string method,
             JObject parameters, CancellationToken token)
         {
             var p = parameters ?? new JObject();
