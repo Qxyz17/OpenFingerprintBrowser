@@ -53,12 +53,24 @@ jobs:
         run: |
           $out = "dist"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
+          # NuGet 依赖必须随 exe 一起分发，漏掉 Newtonsoft.Json.dll 启动即崩
+          Copy-Item "ui/bin/Release/*.dll" $out -Force -ErrorAction SilentlyContinue
           Copy-Item "ui/bin/Release/PxUi.exe" $out -Force
           Copy-Item "ui/bin/Release/PxUi.exe.config" $out -Force -ErrorAction SilentlyContinue
           Copy-Item "proxifier/build/Release/proxifier.dll" $out -Force
           Copy-Item "proxifier/third_party/windivert/x64/WinDivert.dll" $out -Force
           Copy-Item "proxifier/third_party/windivert/x64/WinDivert64.sys" $out -Force
           Get-ChildItem $out | Select-Object Name,Length
+
+      - name: Verify runtime deps
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($name in @("Newtonsoft.Json.dll","proxifier.dll","WinDivert.dll","WinDivert64.sys","PxUi.exe")) {
+            if (-not (Test-Path "dist/$name")) { $missing += $name }
+          }
+          if ($missing.Count -gt 0) { throw "dist 缺少: $($missing -join ', ')" }
+          Write-Output "依赖齐全"
 
       - uses: actions/upload-artifact@v4
         with:
