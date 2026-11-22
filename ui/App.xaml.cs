@@ -17,6 +17,10 @@ namespace PxUi
             try { Directory.CreateDirectory(AppConfig.Dir); } catch { }
 
             base.OnStartup(e);
+
+            var window = new MainWindow();
+            MainWindow = window;
+            window.Show();
         }
 
         internal static void Log(string text)
