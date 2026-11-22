@@ -157,7 +157,7 @@
         <Setter Property="Height" Value="30"/>
     </Style>
 
-    <Style x:Key="Card" TargetType="Border">
+    <Style x:Key="Panel" TargetType="Border">
         <Setter Property="Background" Value="{StaticResource Card}"/>
         <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
         <Setter Property="BorderThickness" Value="1"/>
