@@ -1,0 +1,4 @@
+﻿build/
+_srcprobe/
+proxifier/third_party/
+*.user
