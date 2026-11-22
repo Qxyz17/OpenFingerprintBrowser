@@ -221,6 +221,11 @@ namespace PxUi.Browser
                 args.AddRange(SplitArgs(_profile.Args));
             }
 
+            if (!string.IsNullOrEmpty(_profile.StartUrl))
+            {
+                args.Add(_profile.StartUrl);
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = exe,
@@ -248,34 +253,51 @@ namespace PxUi.Browser
 
         private async Task ApplyAsync(Profile profile, Action<string> log, CancellationToken token)
         {
-            // 注入脚本必须先于任何页面脚本，加在空白页上，之后的导航才继承
-            string payload = Injector.Build(profile);
+            _payload = Injector.Build(profile);
 
-            var create = await _connection.SendAsync("Target.createTarget",
-                new JObject { ["url"] = "about:blank" }, token).ConfigureAwait(false);
-
-            string targetId = create.Value<string>("targetId");
-
-            var attach = await _connection.SendAsync("Target.attachToTarget",
-                new JObject { ["targetId"] = targetId, ["flatten"] = true }, token)
-                .ConfigureAwait(false);
-
-            string sessionId = attach.Value<string>("sessionId");
-
-            await SendToSession(sessionId, "Page.enable", null, token).ConfigureAwait(false);
-            await SendToSession(sessionId, "Runtime.enable", null, token).ConfigureAwait(false);
-
-            await SendToSession(sessionId, "Page.addScriptToEvaluateOnNewDocument",
-                new JObject { ["source"] = payload }, token).ConfigureAwait(false);
-
-            // 先扣住所有请求，注入完成后才放行，网站拿不到任何注入前的执行机会
-            await SendToSession(sessionId, "Fetch.enable", new JObject
+            // 根连接上开自动附着：每个新标签页在跑第一行脚本前就被暂停，
+            // 注入挂上去之后才放行，否则用户新开的标签页是裸的
+            _connection.Event += (method, msg) =>
             {
-                ["patterns"] = new JArray
+                if (method == "Target.attachedToTarget")
                 {
-                    new JObject { ["urlPattern"] = "*", ["requestStage"] = "Request" }
+                    var p = msg["params"] as JObject;
+                    var info = p?["targetInfo"] as JObject;
+                    if (info?.Value<string>("type") != "page")
+                    {
+                        return;
+                    }
+                    string sid = p.Value<string>("sessionId");
+                    if (string.IsNullOrEmpty(sid))
+                    {
+                        return;
+                    }
+
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await InjectIntoTabAsync(sid, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            log("标签页注入失败 " + ex.Message);
+                        }
+                    });
                 }
-            }, token).ConfigureAwait(false);
+                else if (method == "Target.detachedFromTarget")
+                {
+                    var p = msg["params"] as JObject;
+                    string sid = p?.Value<string>("sessionId");
+                    if (!string.IsNullOrEmpty(sid))
+                    {
+                        lock (_tabLock)
+                        {
+                            _tabs.Remove(sid);
+                        }
+                    }
+                }
+            };
 
             _connection.Event += (method, msg) =>
             {
@@ -286,11 +308,14 @@ namespace PxUi.Browser
                 var p = msg["params"] as JObject;
                 if (p == null) return;
                 string requestId = p.Value<string>("requestId");
+                string sid = p.Value<string>("sessionId") ?? _fallbackSession;
+                if (string.IsNullOrEmpty(sid)) return;
+
                 Task.Run(async () =>
                 {
                     try
                     {
-                        await SendToSession(sessionId, "Fetch.continueRequest",
+                        await SendToSession(sid, "Fetch.continueRequest",
                             new JObject { ["requestId"] = requestId }, CancellationToken.None)
                             .ConfigureAwait(false);
                     }
@@ -298,43 +323,59 @@ namespace PxUi.Browser
                 });
             };
 
-            log("注入就绪，session " + sessionId);
-
-            if (!string.IsNullOrEmpty(profile.StartUrl))
+            await _connection.SendAsync("Target.setAutoAttach", new JObject
             {
-                await SendToSession(sessionId, "Page.navigate",
-                    new JObject { ["url"] = profile.StartUrl }, token).ConfigureAwait(false);
-            }
-
-            // 导航后回读实际值，注入没生效时日志里一眼能看出来
-            await Task.Delay(1200, token).ConfigureAwait(false);
-            try
-            {
-                var verify = await SendToSession(sessionId, "Runtime.evaluate", new JObject
+                ["autoAttach"] = true,
+                ["waitForDebuggerOnStart"] = true,
+                ["flatten"] = true,
+                ["filter"] = new JArray
                 {
-                    ["expression"] =
-                        "JSON.stringify({t:Intl.DateTimeFormat().resolvedOptions().timeZone," +
-                        "l:Intl.DateTimeFormat().resolvedOptions().locale," +
-                        "n:navigator.language," +
-                        "o:new Date().getTimezoneOffset()," +
-                        "s:screen.width+'x'+screen.height})",
-                    ["returnByValue"] = true
-                }, token).ConfigureAwait(false);
+                    new JObject { ["type"] = "page", ["exclude"] = false }
+                }
+            }, token).ConfigureAwait(false);
 
-                string raw = verify["result"]?["value"]?.ToString();
-                log("回读 " + (string.IsNullOrEmpty(raw) ? "无结果" : raw));
-            }
-            catch (Exception ex)
-            {
-                log("回读失败 " + ex.Message);
-            }
-
-            _sessionId = sessionId;
+            log("自动附着已开启");
+            _sessionId = null;
         }
 
-        private string _sessionId;
+        // 对一个已附着的标签页完成注入并解除暂停
+        private async Task InjectIntoTabAsync(string sessionId, CancellationToken token)
+        {
+            lock (_tabLock)
+            {
+                if (_tabs.Contains(sessionId))
+                {
+                    return;
+                }
+                _tabs.Add(sessionId);
+            }
+            _fallbackSession = sessionId;
 
-        private async Task<JObject> SendToSession(string sessionId, string method,
+            await SendToSession(sessionId, "Page.enable", null, token).ConfigureAwait(false);
+            await SendToSession(sessionId, "Runtime.enable", null, token).ConfigureAwait(false);
+
+            await SendToSession(sessionId, "Page.addScriptToEvaluateOnNewDocument",
+                new JObject { ["source"] = _payload }, token).ConfigureAwait(false);
+
+            // 扣住所有请求，注入完成才放行
+            await SendToSession(sessionId, "Fetch.enable", new JObject
+            {
+                ["patterns"] = new JArray
+                {
+                    new JObject { ["urlPattern"] = "*", ["requestStage"] = "Request" }
+                }
+            }, token).ConfigureAwait(false);
+
+            // 解除暂停，标签页才开始真正执行
+            await SendToSession(sessionId, "Runtime.runIfWaitingForDebugger",
+                null, token).ConfigureAwait(false);
+        }
+
+
+        private string _payload = "";
+        private string _fallbackSession = "";
+        private readonly object _tabLock = new object();
+        private readonly HashSet<string> _tabs = new HashSet<string>();
             JObject parameters, CancellationToken token)
         {
             var p = parameters ?? new JObject();
