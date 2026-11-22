@@ -1,60 +1,78 @@
-# PxUi
+# 打开指纹浏览器
 
-Windows 下的按进程代理工具。拦截指定进程的出站 TCP 连接，转发到上游代理，其余进程不受影响。
+每个环境独立窗口、独立 user-data-dir、独立指纹。开一个环境就是开一个浏览器，配置存在本地，互不影响。
 
-界面是 WPF（.NET Framework 4.8），拦截引擎是 C++ 动态库，两者通过 `px_*` C 接口衔接。
+界面是 WPF（.NET Framework 4.8），CDP 驱动浏览器，网络层由一个 C++ 拦截引擎配合。
 
-## 功能
+## 它做什么
 
-- 目标进程按名字匹配，支持 Chrome 和 Edge，运行中改名单自动重载引擎
-- 上游支持 SOCKS5 和 HTTP CONNECT，带用户名密码认证
-- 主机名取自 TLS 的 SNI，交给上游代理解析，本机不做 DNS 查询
-- 设置项改完即写盘，端口段改动需要停一次引擎
-- 日志同时写界面和 `%LOCALAPPDATA%\PxUi\pxui.log`
+| 项目 | 手段 |
+| --- | --- |
+| 时区 | 覆盖 `Date.prototype.getTimezoneOffset`、`Intl.DateTimeFormat` 的 `timeZone`，连同 `resolvedOptions` 一起改 |
+| 时区偏移 | `toString` / `toTimeString` 里的 `GMT±HHMM` 一并替换 |
+| 语言 | `navigator.language`、`navigator.languages`，以及各 `Intl` 构造器的默认 locale |
+| Intl 区域 | `DateTimeFormat`、`NumberFormat`、`Collator`、`PluralRules`、`RelativeTimeFormat`、`ListFormat` 注入时统一带 `localeMatcher: lookup` 和配置 locale |
+| 已安装中文字体 | `document.fonts.check` 与 `measureText` 按白名单作答，白名单外的字体一律按回退宽度算 |
+| Emoji 渲染风格 | 按配置选择原生或文本呈现 |
+| Canvas | 逐像素微抖动，或整体填成纯色 |
+| WebGL | 改写 `UNMASKED_VENDOR` / `UNMASKED_RENDERER` 等参数 |
+| Audio | FFT 数据叠加极小噪声 |
+| 硬件参数 | `hardwareConcurrency`、`deviceMemory`、`platform`、`maxTouchPoints` |
+| 屏幕 | `screen.*`、`devicePixelRatio`、`outerWidth/Height` |
+| WebRTC 泄漏 | 浏览器侧 `disable_non_proxied_udp` 强制走代理；注入侧过滤 host 与 srflx 候选 |
+| DNS 泄漏 | 主机名取自 TLS SNI 交给上游代理解析，本机不做解析 |
+
+## 注入是怎么抢到时机
+
+Chromium 的 `--remote-debugging-port` 打开后按这个顺序走：
+
+1. 建一个 `about:blank` 目标
+2. `Target.attachToTarget` 拿到 session
+3. `Page.addScriptToEvaluateOnNewDocument` 挂上注入脚本
+4. `Fetch.enable` 扣住所有请求
+5. 注入完成后才逐个 `Fetch.continueRequest` 放行
+6. 最后 `Page.navigate` 到起始页
+
+因为脚本挂在新文档创建之前，页面拿不到任何注入前的执行机会。请求在放行前一直被拦住，网站也拿不到首包。
 
 ## 目录
 
 ```
-proxifier/        C++ 拦截引擎，编译成 proxifier.dll
-  src/api.cpp     对外 C 接口
-  src/engine.cpp  WinDivert 收包、四元组改写、代端口监听
-  src/relay.cpp   上游代理握手与双向转发
-  src/sni.cpp     TLS ClientHello 里取 SNI
-  src/targets.cpp 目标与代端口映射
-ui/               WPF 界面，编译成 PxUi.exe
-.github/workflows 构建流程
+injector/fingerprint.js   注入载荷，编译时嵌入 exe
+ui/Browser/               CDP 连接、会话、profile 存储、注入装配
+ui/                       WPF 界面
+proxifier/                C++ 网络层，WinDivert 拦截与转发
 ```
-
-## 工作方式
-
-WinDivert 在网络层截获本机出站 TCP 包。SYN 包到达时用 `GetExtendedTcpTable` 按四元组反查属主 PID，命中目标进程就把目标地址改写到本机网卡的某个代端口上。代端口按目标地址分配，上面挂着监听线程，接受连接后与上游代理握手，再在两个 socket 之间搬运字节。回包方向把源地址改回原始目标，客户端看到的就是自己原本要连的地址。
-
-环回地址在 WinDivert 的包路径上看不到，所以重定向落到真实网卡 IPv4 上。
 
 ## 构建
 
-需要 .NET SDK 8+ 和 VS 2022 的 C++ 工具链，或者直接用 GitHub Actions。
+```
+dotnet build ui/PxUi.csproj -c Release
+```
+
+引擎另编：
 
 ```
 cmake -S proxifier -B proxifier/build -G "Visual Studio 17 2022" -A x64
 cmake --build proxifier/build --config Release
-dotnet build ui/PxUi.csproj -c Release
 ```
 
-WinDivert SDK 放在 `proxifier/third_party/windivert`，构建时从 release 下载。
+GitHub Actions 里两者都会跑，产物在 [`dist`](.github/workflows/proxifier.yml)。
 
-## 运行
+## 数据位置
 
-`PxUi.exe` 需要管理员权限，清单里已声明 `requireAdministrator`。程序目录里必须同时有 `proxifier.dll`、`WinDivert.dll`、`WinDivert64.sys`，缺任何一个启动即失败。
-
-配置写在 `%LOCALAPPDATA%\PxUi\config.ini`，也可以用 `pxcli --config <path>` 走命令行。
+```
+%LOCALAPPDATA%\PxUi\profiles\<id>.json   每个环境的配置
+%LOCALAPPDATA%\PxUi\profiles\<id>\       该环境的浏览器数据
+%LOCALAPPDATA%\PxUi\pxui.log             日志
+```
 
 ## 限制
 
-- 只处理 TCP。UDP 和 QUIC 不经过重定向，Chrome 走 QUIC 的连接会绕过代理
-- 进程名匹配在每次 SYN 时按 1.5 秒缓存的快照查表，刚启动的进程可能要等一下才纳入
-- 代端口占在网卡 IP 上，多网卡环境需要确认出站接口与代端口同侧
-- WinDivert 驱动需要签名环境；测试机上要允许加载未签名驱动才能自编译版本可用
+- 注入层是 JS 覆盖，不是改内核。`Function.prototype.toString` 已经做了 native 伪装，但高级检测方仍可能找到破绽
+- 只处理 TCP。QUIC 由 `--disable-quic` 关掉，否则连接会绕过代理
+- 浏览器本体用系统已装的 Chrome 或 Edge，需要自己指定路径
+- 每个环境一个浏览器进程，开多了吃内存
 
 ## 许可
 

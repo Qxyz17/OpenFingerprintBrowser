@@ -1,0 +1,305 @@
+<Window x:Class="PxUi.ProfileWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="环境配置" Width="720" Height="700" MinWidth="660" MinHeight="600"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource Bg}"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="48" ResizeBorderThickness="6" GlassFrameThickness="0,0,0,1"
+                      CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Border Background="{StaticResource TitleBrush}">
+            <Grid>
+                <TextBlock x:Name="TitleText" Text="环境配置" Foreground="White" FontSize="14"
+                           FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,0,0"/>
+                <Button Style="{StaticResource TitleIcon}" Content="&#xE8BB;" Click="Close_Click"
+                        HorizontalAlignment="Right" Margin="0,0,8,0"/>
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="1" Margin="16,12,16,0" Background="Transparent" BorderThickness="0">
+            <TabItem Header="基础">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,12,4,12">
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="标识" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="名称" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="NameBox" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="1" Text="备注" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="RemarkBox" Grid.Row="1" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="2" Text="起始页" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="StartUrlBox" Grid.Row="2" Grid.Column="1"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="浏览器" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="路径" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="BrowserBox" Grid.Column="1" Margin="0,0,8,0"/>
+                                    <Button Grid.Column="2" Style="{StaticResource Ghost}" Content="选择"
+                                            Click="Browse_Click"/>
+                                </Grid>
+                                <TextBlock x:Name="DetectText" Style="{StaticResource Dim}" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="区域">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,12,4,12">
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="预设" Style="{StaticResource H1}"/>
+                                <ComboBox x:Name="PresetBox" Margin="0,10,0,0" Height="32"
+                                          SelectionChanged="Preset_Changed"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}">
+                            <StackPanel>
+                                <TextBlock Text="时区与语言" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="100"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Text="时区" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="TimezoneBox" Grid.Column="1" Margin="0,0,8,8"
+                                             TextChanged="Timezone_Changed"/>
+                                    <TextBlock Grid.Column="2" Text="偏移(分钟)" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="8,0,8,8"/>
+                                    <TextBox x:Name="OffsetBox" Grid.Column="3" Margin="0,0,0,8"/>
+
+                                    <TextBlock Grid.Row="1" Text="语言" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="LangBox" Grid.Row="1" Grid.Column="1" Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Text="Accept-Language"
+                                               Style="{StaticResource Dim}" VerticalAlignment="Center"
+                                               Margin="8,0,8,0"/>
+                                    <TextBox x:Name="AcceptBox" Grid.Row="1" Grid.Column="3"/>
+
+                                    <TextBlock Grid.Row="2" Text="Intl 区域" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="0,8,0,0"/>
+                                    <TextBox x:Name="LocaleBox" Grid.Row="2" Grid.Column="1"
+                                             Margin="0,8,8,0"/>
+
+                                    <TextBlock Grid.Row="3" Text="Emoji" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="0,8,0,0"/>
+                                    <ComboBox x:Name="EmojiBox" Grid.Row="3" Grid.Column="1" Margin="0,8,8,0">
+                                        <ComboBoxItem Content="native"/>
+                                        <ComboBoxItem Content="text"/>
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="硬件">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,12,4,12">
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="屏幕" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Text="宽 x 高" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,8,8">
+                                        <TextBox x:Name="ScreenWBox" Width="70"/>
+                                        <TextBlock Text="x" Margin="6,0" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="ScreenHBox" Width="70"/>
+                                    </StackPanel>
+
+                                    <TextBlock Grid.Column="2" Text="可用高" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="8,0,8,8"/>
+                                    <TextBox x:Name="AvailHBox" Grid.Column="3" Margin="0,0,0,8"/>
+
+                                    <TextBlock Grid.Row="1" Text="像素比" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="DprBox" Grid.Row="1" Grid.Column="1" Margin="0,0,8,0"/>
+
+                                    <TextBlock Grid.Row="2" Text="触控点" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="0,8,0,0"/>
+                                    <TextBox x:Name="TouchBox" Grid.Row="2" Grid.Column="1" Margin="0,8,8,0"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}">
+                            <StackPanel>
+                                <TextBlock Text="CPU 与内存" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="110"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="核心数" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="CoresBox" Grid.Column="1" Margin="0,0,8,8"/>
+                                    <TextBlock Grid.Column="2" Text="内存(GB)" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center" Margin="8,0,8,8"/>
+                                    <TextBox x:Name="MemBox" Grid.Column="3" Margin="0,0,0,8"/>
+
+                                    <TextBlock Grid.Row="1" Text="平台" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="PlatformBox" Grid.Row="1" Grid.Column="1"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="渲染">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,12,4,12">
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="Canvas 与音频" Style="{StaticResource H1}"/>
+                                <CheckBox x:Name="CanvasNoiseCheck" Content="Canvas 噪声" Margin="0,10,0,0"/>
+                                <CheckBox x:Name="CanvasBlockCheck" Content="Canvas 整体填充（更强）"
+                                          Margin="0,8,0,0"/>
+                                <CheckBox x:Name="AudioNoiseCheck" Content="Audio 噪声" Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}">
+                            <StackPanel>
+                                <TextBlock Text="WebGL" Style="{StaticResource H1}"/>
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="厂商" Style="{StaticResource Dim}" VerticalAlignment="Center"/>
+                                    <TextBox x:Name="GlVendorBox" Grid.Column="1" Margin="0,0,0,8"/>
+                                    <TextBlock Grid.Row="1" Text="渲染器" Style="{StaticResource Dim}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBox x:Name="GlRendererBox" Grid.Row="1" Grid.Column="1"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="字体">
+                <Grid Margin="4,12,4,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="每行一个字体名，页面只能看到这里列出的字体" Style="{StaticResource Dim}"
+                               Margin="0,0,0,8"/>
+                    <TextBox x:Name="FontsBox" Grid.Row="1" AcceptsReturn="True"
+                             VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"
+                             Padding="8"/>
+                    <TextBlock x:Name="FontCountText" Grid.Row="2" Style="{StaticResource Dim}"
+                               Margin="0,8,0,0"/>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="网络">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,12,4,12">
+                        <Border Style="{StaticResource Panel}" Margin="0,0,0,12">
+                            <StackPanel>
+                                <TextBlock Text="WebRTC" Style="{StaticResource H1}"/>
+                                <CheckBox x:Name="WebRtcCheck" Content="允许 WebRTC" Margin="0,10,0,0"
+                                          Checked="WebRtc_Toggle" Unchecked="WebRtc_Toggle"/>
+                                <ComboBox x:Name="WebRtcModeBox" Margin="0,8,0,0" Height="30">
+                                    <ComboBoxItem Content="block"/>
+                                    <ComboBoxItem Content="off"/>
+                                </ComboBox>
+                                <TextBlock Text="block 会清空 ICE 服务器并过滤 host/srflx 候选"
+                                           Style="{StaticResource Dim}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Panel}">
+                            <StackPanel>
+                                <TextBlock Text="代理" Style="{StaticResource H1}"/>
+                                <CheckBox x:Name="ProxyCheck" Content="走本地代理" Margin="0,10,0,0"/>
+                                <TextBlock Text="代理由引擎按进程名接管，勾选后浏览器加 disable_non_proxied_udp"
+                                           Style="{StaticResource Dim}" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Padding="16,12" Background="White" BorderBrush="{StaticResource Line}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Button Style="{StaticResource Ghost}" Content="取消" Click="Close_Click"
+                        HorizontalAlignment="Right" Margin="0,0,100,0" Width="80"/>
+                <Button Style="{StaticResource Primary}" Content="保存" Click="Save_Click"
+                        HorizontalAlignment="Right" Width="80"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

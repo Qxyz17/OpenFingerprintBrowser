@@ -27,6 +27,8 @@ namespace PxUi
 
         public static string LogPath => Path.Combine(Dir, "pxui.log");
 
+        public static string ProfileRoot => Path.Combine(Dir, "profiles");
+
         public static AppConfig Load()
         {
             var c = new AppConfig();

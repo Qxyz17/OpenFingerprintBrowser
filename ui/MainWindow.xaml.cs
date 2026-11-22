@@ -1,144 +1,171 @@
 using System;
-using System.Runtime.InteropServices;
-using System.Text;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using PxUi.Browser;
 
 namespace PxUi
 {
     public partial class MainWindow : Window
     {
-        private readonly AppConfig _cfg = App.Config;
-        private bool _applying;
-        private Native.LogSink _sink;
+        private readonly ObservableCollection<ProfileRow> _rows = new ObservableCollection<ProfileRow>();
+        private readonly Dictionary<string, BrowserSession> _sessions =
+            new Dictionary<string, BrowserSession>();
 
         public MainWindow()
         {
             InitializeComponent();
-            _sink = OnEngineLog;
-            Native.SetLogHandler(_sink);
-            LoadToUi();
-            RefreshStatus();
+            ProfileList.ItemsSource = _rows;
+            Reload();
         }
 
-        private void LoadToUi()
+        internal static readonly Brush RunningBrush =
+            new SolidColorBrush(Color.FromRgb(0x22, 0xA0, 0x6B));
+        internal static readonly Brush IdleBrush =
+            new SolidColorBrush(Color.FromRgb(0x9A, 0xA1, 0xAC));
+
+        internal void Reload()
         {
-            _applying = true;
-
-            ChromeCheck.IsChecked = _cfg.TargetChrome;
-            EdgeCheck.IsChecked = _cfg.TargetEdge;
-
-            TypeBox.SelectedIndex = _cfg.UpstreamType == "http" ? 1 : 0;
-            HostBox.Text = _cfg.UpstreamHost;
-            PortBox.Text = _cfg.UpstreamPort.ToString();
-            UserBox.Text = _cfg.Username;
-            PassBox.Text = _cfg.Password;
-
-            BasePortBox.Text = _cfg.BasePort.ToString();
-            PortCountBox.Text = _cfg.PortCount.ToString();
-            IdleBox.Text = _cfg.FlowIdleSeconds.ToString();
-
-            _applying = false;
-        }
-
-        private void ReadFromUi()
-        {
-            _cfg.TargetChrome = ChromeCheck.IsChecked == true;
-            _cfg.TargetEdge = EdgeCheck.IsChecked == true;
-
-            _cfg.UpstreamType = TypeBox.SelectedIndex == 1 ? "http" : "socks5";
-            _cfg.UpstreamHost = HostBox.Text.Trim();
-            if (int.TryParse(PortBox.Text.Trim(), out var port) && port > 0 && port < 65536)
-                _cfg.UpstreamPort = port;
-            _cfg.Username = UserBox.Text.Trim();
-            _cfg.Password = PassBox.Text;
-
-            if (int.TryParse(BasePortBox.Text.Trim(), out var bp) && bp >= 1024 && bp < 65000)
-                _cfg.BasePort = bp;
-            if (int.TryParse(PortCountBox.Text.Trim(), out var pc) && pc > 0 && pc <= 4096)
-                _cfg.PortCount = pc;
-            if (int.TryParse(IdleBox.Text.Trim(), out var idle) && idle >= 10)
-                _cfg.FlowIdleSeconds = idle;
-        }
-
-        private bool Running => Native.px_is_running() == 1;
-
-        private void RefreshStatus()
-        {
-            bool running = Running;
-            StatusDot.Fill = running
-                ? (Brush)new SolidColorBrush(Color.FromRgb(0x22, 0xA0, 0x6B))
-                : new SolidColorBrush(Color.FromRgb(0x9A, 0xA1, 0xAC));
-            StatusText.Text = running ? "运行中" : "未启动";
-            ToggleButton.Content = running ? "停止" : "启动";
-
-            // 端口段改动需要重启引擎才生效，运行中锁住
-            BasePortBox.IsEnabled = !running;
-            PortCountBox.IsEnabled = !running;
-        }
-
-        private void Toggle_Click(object sender, RoutedEventArgs e)
-        {
-            if (Running)
+            _rows.Clear();
+            var list = ProfileStore.List();
+            foreach (var p in list)
             {
-                Native.px_stop();
-                AppendLog("引擎已停止");
-                RefreshStatus();
+                _rows.Add(new ProfileRow(p, IsRunning(p.Id) ? "运行中" : "未启动",
+                    IsRunning(p.Id) ? RunningBrush : IdleBrush));
+            }
+            CountText.Text = list.Count + " 个配置";
+            EmptyHint.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        internal bool IsRunning(string id)
+        {
+            BrowserSession s;
+            return _sessions.TryGetValue(id, out s) && s.IsRunning;
+        }
+
+        private void New_Click(object sender, RoutedEventArgs e)
+        {
+            var profile = new Profile { Name = "环境 " + (_rows.Count + 1) };
+            profile.BrowserPath = BrowserLocator.Detect();
+
+            var editor = new ProfileWindow(profile, true) { Owner = this };
+            if (editor.ShowDialog() == true)
+            {
+                ProfileStore.Save(profile);
+                Reload();
+                AppendLog("已创建 " + profile.Name);
+            }
+        }
+
+        private void Edit_Click(object sender, RoutedEventArgs e)
+        {
+            var row = (sender as Button)?.Tag as ProfileRow;
+            if (row == null) return;
+
+            var editor = new ProfileWindow(row.Profile, false) { Owner = this };
+            if (editor.ShowDialog() == true)
+            {
+                ProfileStore.Save(row.Profile);
+                Reload();
+            }
+        }
+
+        private void Open_Click(object sender, RoutedEventArgs e)
+        {
+            var row = (sender as Button)?.Tag as ProfileRow;
+            if (row == null) return;
+            OpenProfile(row.Profile);
+        }
+
+        private void ProfileList_DoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            var row = ProfileList.SelectedItem as ProfileRow;
+            if (row == null) return;
+            OpenProfile(row.Profile);
+        }
+
+        private void OpenProfile(Profile profile)
+        {
+            if (IsRunning(profile.Id))
+            {
+                AppendLog(profile.Name + " 已在运行");
                 return;
             }
 
-            ReadFromUi();
-            _cfg.Save();
+            var session = new BrowserSession(profile);
+            _sessions[profile.Id] = session;
+            AppendLog("启动 " + profile.Name);
 
-            int rc = Native.px_start(AppConfig.ConfigPath);
-            if (rc != 0)
+            System.Threading.Tasks.Task.Run(async () =>
             {
-                string err = Native.LastError();
-                AppendLog("启动失败: " + (string.IsNullOrEmpty(err) ? "错误码 " + rc : err));
-                MessageBox.Show(this, string.IsNullOrEmpty(err) ? "错误码 " + rc : err, "启动失败",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
-            else
-            {
-                AppendLog("引擎已启动");
-            }
-            RefreshStatus();
+                try
+                {
+                    await session.StartAsync(msg => Dispatcher.BeginInvoke(
+                        new Action(() => AppendLog(profile.Name + ": " + msg))),
+                        System.Threading.CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        AppendLog(profile.Name + " 启动失败: " + ex.Message);
+                        _sessions.Remove(profile.Id);
+                        Reload();
+                    }));
+                }
+            });
+
+            Reload();
         }
 
-        private void Target_Changed(object sender, RoutedEventArgs e)
+        private void Delete_Click(object sender, RoutedEventArgs e)
         {
-            if (_applying) return;
-            ReadFromUi();
-            _cfg.Save();
+            var row = (sender as Button)?.Tag as ProfileRow;
+            if (row == null) return;
 
-            // 名单改动要靠重载生效，运行中就自动重启一次
-            if (Running)
+            if (MessageBox.Show(this, "删除 " + row.Profile.Name + " 及其浏览器数据？", "确认",
+                    MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             {
-                Native.px_stop();
-                int rc = Native.px_start(AppConfig.ConfigPath);
-                AppendLog(rc == 0 ? "名单已更新，引擎重启" : "名单已更新，重启失败");
+                return;
             }
-            RefreshStatus();
+
+            BrowserSession session;
+            if (_sessions.TryGetValue(row.Profile.Id, out session))
+            {
+                session.Dispose();
+                _sessions.Remove(row.Profile.Id);
+            }
+
+            ProfileStore.Delete(row.Profile);
+            try
+            {
+                string dir = System.IO.Path.Combine(AppConfig.ProfileRoot, row.Profile.Id);
+                if (System.IO.Directory.Exists(dir))
+                {
+                    System.IO.Directory.Delete(dir, true);
+                }
+            }
+            catch
+            {
+            }
+
+            Reload();
         }
 
-        private void OnEngineLog(IntPtr text)
+        private void Proxy_Click(object sender, RoutedEventArgs e)
         {
-            string line = text == IntPtr.Zero ? "" : Marshal.PtrToStringAnsi(text);
-            if (string.IsNullOrEmpty(line)) return;
-            Dispatcher.BeginInvoke(new Action(() => AppendLog(line)));
+            new SettingsWindow { Owner = this }.ShowDialog();
         }
 
         private void AppendLog(string line)
         {
             App.Log(line);
-            LogBox.AppendText(DateTime.Now.ToString("HH:mm:ss") + " " + line + Environment.NewLine);
-            LogBox.ScrollToEnd();
         }
 
-        private void ClearLog_Click(object sender, RoutedEventArgs e)
-        {
-            LogBox.Clear();
-        }
+        private void ClearLog_Click(object sender, RoutedEventArgs e) { }
 
         private void Min_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
@@ -153,8 +180,50 @@ namespace PxUi
 
         protected override void OnClosed(EventArgs e)
         {
-            Native.px_stop();
-            base.OnClosed(e);
+            foreach (var s in _sessions.Values)
+            {
+                s.Dispose();
+            }
+            _sessions.Clear();
+            Application.Current.Shutdown();
+        }
+    }
+
+    internal sealed class ProfileRow
+    {
+        public ProfileRow(Profile p, string status, Brush color)
+        {
+            Profile = p;
+            StatusText = status;
+            StatusColor = color;
+        }
+
+        public Profile Profile { get; }
+        public string Name => Profile.Name;
+        public string Remark => Profile.Remark;
+        public string BrowserKind => Profile.BrowserKind;
+        public string Timezone => Profile.Timezone;
+        public string Language => Profile.Language;
+        public string StatusText { get; }
+        public Brush StatusColor { get; }
+    }
+
+    internal static class BrowserLocator
+    {
+        public static string Detect()
+        {
+            string[] candidates =
+            {
+                @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                @"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+            };
+            foreach (var path in candidates)
+            {
+                if (System.IO.File.Exists(path)) return path;
+            }
+            return "";
         }
     }
 }
