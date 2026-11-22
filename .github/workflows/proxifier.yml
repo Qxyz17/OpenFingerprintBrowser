@@ -41,7 +41,19 @@ jobs:
         shell: pwsh
         run: cmake --build proxifier/build --config Release
 
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = "proxifier/out"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "proxifier/build/Release/proxifier.exe" $out -Force
+          # 运行时必须与 WinDivert.dll 和同目录的驱动同放，缺一个启动即 0xC0000135
+          Copy-Item "proxifier/third_party/windivert/x64/WinDivert.dll" $out -Force
+          Copy-Item "proxifier/third_party/windivert/x64/WinDivert64.sys" $out -Force
+          Copy-Item "proxifier/config.example.ini" "$out/config.ini" -Force
+          Get-ChildItem $out | Select-Object Name,Length
+
       - uses: actions/upload-artifact@v4
         with:
           name: proxifier-x64
-          path: proxifier/build/Release/proxifier.exe
+          path: proxifier/out/*
