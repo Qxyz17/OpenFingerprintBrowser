@@ -335,7 +335,6 @@ namespace PxUi.Browser
             }, token).ConfigureAwait(false);
 
             log("自动附着已开启");
-            _sessionId = null;
         }
 
         // 对一个已附着的标签页完成注入并解除暂停
