@@ -368,6 +368,10 @@ namespace PxUi.Browser
             // 解除暂停，标签页才开始真正执行
             await SendToSession(sessionId, "Runtime.runIfWaitingForDebugger",
                 null, token).ConfigureAwait(false);
+
+            // 附着时文档已经提交，注入只对之后创建的文档生效，必须重载一次
+            await SendToSession(sessionId, "Page.reload",
+                new JObject { ["ignoreCache"] = false }, token).ConfigureAwait(false);
         }
 
 
