@@ -1,9 +1,13 @@
 ﻿bin/
 obj/
 dist/
+_dist/
+_dist2/
 _artifacts/
 _artifacts2/
 _srcprobe/
 proxifier/build/
 proxifier/third_party/
 proxifier/out/
+*.dll
+*.sys
